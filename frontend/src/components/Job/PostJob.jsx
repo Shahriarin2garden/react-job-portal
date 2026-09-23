@@ -1,7 +1,7 @@
-import React, { useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import axios from "axios";
 import toast from "react-hot-toast";
-import { useNavigate, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { Context } from "../../main";
 const PostJob = () => {
   const [title, setTitle] = useState("");
@@ -67,7 +67,6 @@ const PostJob = () => {
       });
   };
 
-  const navigateTo = useNavigate();
   if (!isAuthorized || (user && user.role !== "Employer")) {
     return <Navigate to="/login" />;
   }

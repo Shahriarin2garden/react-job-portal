@@ -1,8 +1,8 @@
-import React, { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Context } from "../../main";
 import axios from "axios";
 import toast from "react-hot-toast";
-import { useNavigate, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import ResumeModal from "./ResumeModal";
 
 const MyApplications = () => {
@@ -12,8 +12,6 @@ const MyApplications = () => {
   const [resumeImageUrl, setResumeImageUrl] = useState("");
 
   const { isAuthorized } = useContext(Context);
-  const navigateTo = useNavigate();
-
   useEffect(() => {
     try {
       if (user && user.role === "Employer") {
@@ -36,7 +34,7 @@ const MyApplications = () => {
     } catch (error) {
       toast.error(error.response.data.message);
     }
-  }, [isAuthorized]);
+  }, [isAuthorized, user]);
 
   if (!isAuthorized) {
     return <Navigate to="/login" />;

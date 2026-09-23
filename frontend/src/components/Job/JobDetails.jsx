@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Link, useParams, Navigate } from "react-router-dom";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -18,10 +18,10 @@ const JobDetails = () => {
       .then((res) => {
         setJob(res.data.job);
       })
-      .catch((error) => {
+      .catch(() => {
         navigateTo("/notfound");
       });
-  }, []);
+  }, [id, navigateTo]);
 
   if (!isAuthorized) {
     return <Navigate to="/login" />;
