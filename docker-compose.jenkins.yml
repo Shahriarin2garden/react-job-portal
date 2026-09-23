@@ -1,0 +1,63 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' mongodb://127.0.0.1:27017/admin | grep 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - mongodb_ci_data:/data/db
+    networks:
+      - job-portal-network
+
+  backend:
+    image: ${BACKEND_IMAGE:-react-job-portal-backend:ci}
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      DB_URL: ${DB_URL:-mongodb://mongodb:27017/Job_Portal}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-ci-only-secret}
+      JWT_EXPIRE: ${JWT_EXPIRE:-7d}
+      COOKIE_EXPIRE: ${COOKIE_EXPIRE:-7}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-ci_dummy_cloud}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-123456789012345}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-ci_dummy_secret}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(4000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - job-portal-network
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-react-job-portal-frontend:ci}
+    ports:
+      - "5173:5173"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5173/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - job-portal-network
+
+volumes:
+  mongodb_ci_data:
+
+networks:
+  job-portal-network:
+    driver: bridge

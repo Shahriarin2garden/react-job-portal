@@ -1,0 +1,48 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - job-portal-network
+
+  backend:
+    build:
+      context: ./backend
+    image: react-job-portal-backend:local
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      FRONTEND_URL: http://localhost:5173
+      DB_URL: mongodb://mongodb:27017/Job_Portal
+      JWT_SECRET_KEY: local-only-secret-change-me
+      JWT_EXPIRE: 7d
+      COOKIE_EXPIRE: 7
+      CLOUDINARY_CLOUD_NAME: local_dummy_cloud
+      CLOUDINARY_API_KEY: "123456789012345"
+      CLOUDINARY_API_SECRET: local_dummy_secret
+    depends_on:
+      mongodb:
+        condition: service_started
+    networks:
+      - job-portal-network
+
+  frontend:
+    build:
+      context: ./frontend
+    image: react-job-portal-frontend:local
+    ports:
+      - "5173:5173"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    depends_on:
+      - backend
+    networks:
+      - job-portal-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  job-portal-network:
+    driver: bridge
