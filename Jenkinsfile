@@ -5,6 +5,7 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
+        skipDefaultCheckout(true)
     }
 
     environment {
@@ -30,23 +31,21 @@ pipeline {
     }
 
     stages {
-        stage('Clean Workspace') {
-            steps {
-                deleteDir()
-            }
-        }
 
-        stage('Clone Repository') {
+        stage('Checkout Repository') {
             steps {
-                echo 'Cloning react-job-portal main branch'
-                git branch: 'main', url: 'https://github.com/exclusiveabhi/react-job-portal.git'
+                checkout scm
 
                 sh '''
                     set -eu
+
                     echo "Commit: $(git rev-parse --short HEAD)"
-                    git status --short
-                    echo '--- repository root ---'
+                    echo "Branch: $(git branch --show-current || true)"
+
+                    echo "--- project structure ---"
                     ls -lah
+                    ls -lah backend
+                    ls -lah frontend
                 '''
             }
         }
@@ -67,19 +66,12 @@ pipeline {
                     test -f backend/package-lock.json
                     test -f frontend/package-lock.json
 
-                    export BACKEND_IMAGE="$BACKEND_IMAGE"
-                    export FRONTEND_IMAGE="$FRONTEND_IMAGE"
-                    export FRONTEND_URL="$FRONTEND_URL"
-                    export DB_URL="$DB_URL"
-                    export JWT_SECRET_KEY="$JWT_SECRET_KEY"
-                    export JWT_EXPIRE="$JWT_EXPIRE"
-                    export COOKIE_EXPIRE="$COOKIE_EXPIRE"
-                    export CLOUDINARY_CLOUD_NAME="$CLOUDINARY_CLOUD_NAME"
-                    export CLOUDINARY_API_KEY="$CLOUDINARY_API_KEY"
-                    export CLOUDINARY_API_SECRET="$CLOUDINARY_API_SECRET"
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        config
+                    > /tmp/react-job-portal-compose.yml
 
-                    docker compose -f docker-compose.jenkins.yml config >/tmp/react-job-portal-compose.yml
-                    echo 'Compose configuration is valid.'
+                    echo "Compose configuration is valid."
                 '''
             }
         }
@@ -89,6 +81,7 @@ pipeline {
                 dir('backend') {
                     sh '''
                         set -eu
+
                         docker run --rm \
                             -u "$(id -u):$(id -g)" \
                             -e HOME=/tmp \
@@ -107,6 +100,7 @@ pipeline {
                 dir('frontend') {
                     sh '''
                         set -eu
+
                         docker run --rm \
                             -u "$(id -u):$(id -g)" \
                             -e HOME=/tmp \
@@ -125,11 +119,20 @@ pipeline {
                 sh '''
                     set -eu
 
-                    docker build -t "$BACKEND_IMAGE" ./backend
-                    docker build -t "$FRONTEND_IMAGE" ./frontend
+                    docker build \
+                        -t "$BACKEND_IMAGE" \
+                        ./backend
 
-                    echo '--- built images ---'
-                    docker images --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}' | grep -E 'react-job-portal-(backend|frontend)' || true
+                    docker build \
+                        -t "$FRONTEND_IMAGE" \
+                        ./frontend
+
+                    echo "--- built images ---"
+
+                    docker images \
+                        --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}' |
+                        grep -E 'react-job-portal-(backend|frontend)' ||
+                        true
                 '''
             }
         }
@@ -139,8 +142,18 @@ pipeline {
                 sh '''
                     set -eu
 
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" up -d --force-recreate --no-build mongodb
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        up -d \
+                        --force-recreate \
+                        --no-build \
+                        mongodb
+
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        ps
                 '''
             }
         }
@@ -150,8 +163,18 @@ pipeline {
                 sh '''
                     set -eu
 
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" up -d --force-recreate --no-build backend
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        up -d \
+                        --force-recreate \
+                        --no-build \
+                        backend
+
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        ps
                 '''
             }
         }
@@ -161,8 +184,18 @@ pipeline {
                 sh '''
                     set -eu
 
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" up -d --force-recreate --no-build frontend
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        up -d \
+                        --force-recreate \
+                        --no-build \
+                        frontend
+
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        ps
                 '''
             }
         }
@@ -172,57 +205,90 @@ pipeline {
                 sh '''
                     set -eu
 
-                    echo 'Waiting for frontend and backend...'
+                    echo "Waiting for frontend and backend..."
 
                     frontend_ok=0
                     backend_ok=0
 
                     for i in $(seq 1 60); do
-                        if curl -fsS http://127.0.0.1:5173/ >/dev/null 2>&1; then
+                        if curl -fsS \
+                            http://127.0.0.1:5173/ \
+                            >/dev/null 2>&1
+                        then
                             frontend_ok=1
                             echo "Frontend is ready after ${i} checks"
                             break
                         fi
+
                         sleep 2
                     done
 
                     for i in $(seq 1 60); do
-                        if curl -fsS http://127.0.0.1:4000/api/v1/job/getall >/dev/null 2>&1; then
+                        if curl -fsS \
+                            http://127.0.0.1:4000/api/v1/job/getall \
+                            >/dev/null 2>&1
+                        then
                             backend_ok=1
                             echo "Backend API is ready after ${i} checks"
                             break
                         fi
+
                         sleep 2
                     done
 
                     test "$frontend_ok" -eq 1
                     test "$backend_ok" -eq 1
 
-                    echo '--- compose status ---'
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
+                    echo "--- compose status ---"
 
-                    echo '--- backend logs ---'
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" logs --tail=100 backend
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        ps
 
-                    echo '--- frontend logs ---'
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" logs --tail=100 frontend
+                    echo "--- backend logs ---"
 
-                    echo '--- mongodb logs ---'
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" logs --tail=100 mongodb
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        logs --tail=100 backend
 
-                    echo 'FULL STACK SMOKE TEST PASSED'
+                    echo "--- frontend logs ---"
+
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        logs --tail=100 frontend
+
+                    echo "--- mongodb logs ---"
+
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        logs --tail=100 mongodb
+
+                    echo "FULL STACK SMOKE TEST PASSED"
                 '''
             }
         }
     }
 
     post {
+
         always {
             sh '''
                 set +e
+
                 if [ -f docker-compose.jenkins.yml ]; then
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" logs --tail=120
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        ps
+
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        logs --tail=120
                 fi
             '''
         }
@@ -234,11 +300,16 @@ pipeline {
         }
 
         failure {
-            echo 'Pipeline failed. Review the failed stage and the compose logs above.'
+            echo 'Pipeline failed. Review the failed stage and compose logs.'
+
             sh '''
                 set +e
+
                 if [ -f docker-compose.jenkins.yml ]; then
-                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" down --remove-orphans
+                    docker compose \
+                        -f docker-compose.jenkins.yml \
+                        -p "$COMPOSE_PROJECT" \
+                        down --remove-orphans
                 fi
             '''
         }
