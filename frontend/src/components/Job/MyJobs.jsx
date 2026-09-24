@@ -16,12 +16,12 @@ const MyJobs = () => {
     const fetchJobs = async () => {
       try {
         const { data } = await axios.get(
-          "http://localhost:4000/api/v1/job/getmyjobs",
+          `${import.meta.env.VITE_API_URL}/job/getmyjobs`,
           { withCredentials: true }
         );
         setMyJobs(data.myJobs);
       } catch (error) {
-        toast.error(error.response.data.message);
+        toast.error(error.response?.data?.message || error.message || "Something went wrong");
         setMyJobs([]);
       }
     };
@@ -46,7 +46,7 @@ const MyJobs = () => {
   const handleUpdateJob = async (jobId) => {
     const updatedJob = myJobs.find((job) => job._id === jobId);
     await axios
-      .put(`http://localhost:4000/api/v1/job/update/${jobId}`, updatedJob, {
+      .put(`${import.meta.env.VITE_API_URL}/job/update/${jobId}`, updatedJob, {
         withCredentials: true,
       })
       .then((res) => {
@@ -54,14 +54,14 @@ const MyJobs = () => {
         setEditingMode(null);
       })
       .catch((error) => {
-        toast.error(error.response.data.message);
+        toast.error(error.response?.data?.message || error.message || "Something went wrong");
       });
   };
 
   //Function For Deleting Job
   const handleDeleteJob = async (jobId) => {
     await axios
-      .delete(`http://localhost:4000/api/v1/job/delete/${jobId}`, {
+      .delete(`${import.meta.env.VITE_API_URL}/job/delete/${jobId}`, {
         withCredentials: true,
       })
       .then((res) => {
@@ -69,7 +69,7 @@ const MyJobs = () => {
         setMyJobs((prevJobs) => prevJobs.filter((job) => job._id !== jobId));
       })
       .catch((error) => {
-        toast.error(error.response.data.message);
+        toast.error(error.response?.data?.message || error.message || "Something went wrong");
       });
   };
 

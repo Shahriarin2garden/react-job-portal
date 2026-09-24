@@ -19,7 +19,8 @@ pipeline {
         BACKEND_PORT    = '4000'
         FRONTEND_PORT   = '5173'
 
-        FRONTEND_URL    = 'http://localhost:5173'
+        VITE_API_URL    = 'http://192.168.56.50:4000/api/v1'
+        FRONTEND_URL    = 'http://192.168.56.50:5173'
         DB_URL          = 'mongodb://mongodb:27017/Job_Portal'
 
         JWT_EXPIRE      = '7d'

@@ -16,7 +16,7 @@ const MyApplications = () => {
     try {
       if (user && user.role === "Employer") {
         axios
-          .get("http://localhost:4000/api/v1/application/employer/getall", {
+          .get(`${import.meta.env.VITE_API_URL}/application/employer/getall`, {
             withCredentials: true,
           })
           .then((res) => {
@@ -24,7 +24,7 @@ const MyApplications = () => {
           });
       } else {
         axios
-          .get("http://localhost:4000/api/v1/application/jobseeker/getall", {
+          .get(`${import.meta.env.VITE_API_URL}/application/jobseeker/getall`, {
             withCredentials: true,
           })
           .then((res) => {
@@ -32,7 +32,7 @@ const MyApplications = () => {
           });
       }
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || error.message || "Something went wrong");
     }
   }, [isAuthorized, user]);
 
@@ -43,7 +43,7 @@ const MyApplications = () => {
   const deleteApplication = (id) => {
     try {
       axios
-        .delete(`http://localhost:4000/api/v1/application/delete/${id}`, {
+        .delete(`${import.meta.env.VITE_API_URL}/application/delete/${id}`, {
           withCredentials: true,
         })
         .then((res) => {
@@ -53,7 +53,7 @@ const MyApplications = () => {
           );
         });
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || error.message || "Something went wrong");
     }
   };
 

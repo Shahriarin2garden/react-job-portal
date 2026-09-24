@@ -25,7 +25,7 @@ const Register = () => {
     setLoading(true);
     try {
       const { data } = await axios.post(
-        "http://localhost:4000/api/v1/user/register",
+        `${import.meta.env.VITE_API_URL}/user/register`,
         { name, phone, email, role, password },
         {
           headers: {
@@ -42,7 +42,8 @@ const Register = () => {
       setRole("");
       setIsAuthorized(true);
     } catch (error) {
-      toast.error(error.response.data.message);
+      const message = error.response?.data?.message || error.message || "Something went wrong";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
