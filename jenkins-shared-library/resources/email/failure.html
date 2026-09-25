@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; color: #1f2933; }
+    .card { max-width: 640px; margin: 0 auto; border: 1px solid #e4e7eb; border-radius: 8px; overflow: hidden; }
+    .header { background: #cf1124; color: #ffffff; padding: 16px 24px; }
+    .header h1 { margin: 0; font-size: 20px; }
+    .body { padding: 24px; }
+    table { border-collapse: collapse; width: 100%; }
+    td { padding: 6px 0; vertical-align: top; }
+    td.label { width: 150px; color: #52606d; font-weight: bold; }
+    .footer { padding: 12px 24px; background: #f5f7fa; color: #7b8794; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Build Failed</h1>
+    </div>
+    <div class="body">
+      <p>The pipeline for <strong>${PROJECT_NAME}</strong> did not complete successfully.</p>
+      <table>
+        <tr><td class="label">Job</td><td>${JOB_NAME}</td></tr>
+        <tr><td class="label">Build</td><td>#${BUILD_NUMBER}</td></tr>
+        <tr><td class="label">Branch</td><td>${GIT_BRANCH}</td></tr>
+        <tr><td class="label">Commit</td><td>${GIT_COMMIT}</td></tr>
+        <tr><td class="label">Status</td><td>${STATUS}</td></tr>
+      </table>
+      <p>${CHANGES}</p>
+      <p><a href="${BUILD_URL}console">Open the build console</a></p>
+    </div>
+    <div class="footer">Sent automatically by Jenkins (react-job-portal pipeline).</div>
+  </div>
+</body>
+</html>
