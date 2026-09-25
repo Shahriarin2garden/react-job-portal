@@ -423,7 +423,7 @@ pipeline {
                     }
 
                     buildDockerImage(image: "${BACKEND_IMAGE}", context: 'backend')
-                    buildDockerImage(image: "${FRONTEND_IMAGE}", context: 'frontend')
+                    buildDockerImage(image: "${FRONTEND_IMAGE}", context: 'frontend', buildArgs: ["VITE_API_URL=${VITE_API_URL}"])
                 }
 
                 sh '''
