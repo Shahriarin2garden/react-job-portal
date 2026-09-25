@@ -1,7 +1,3 @@
-// Load shared library from this repo's jenkins-shared-library directory
-@Library(value='react-job-portal-shared-lib', changelog=false) _
-library identifier: 'react-job-portal-shared-lib@main', retriever: legacySCM([$class: 'GitSCMSource', remote: 'https://github.com/Shahriarin2garden/react-job-portal.git', credentialsId: 'github-private-repo-credentials', traits: [[$class: 'jenkins.plugins.git.traits.BranchDiscoveryTrait']]])
-
 pipeline {
     agent any
 
@@ -10,15 +6,9 @@ pipeline {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
         skipDefaultCheckout(true)
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
     }
 
-    /*
-     * Webhook triggering.
-     * githubPush() requires the GitHub plugin and a webhook pointing at:
-     *   http://<jenkins-host>:8080/github-webhook/
-     * The pollSCM fallback also picks up changes if the webhook is unavailable.
-     */
     triggers {
         githubPush()
         pollSCM('H/15 * * * *')
@@ -63,11 +53,33 @@ pipeline {
 
         stage('Checkout Repository') {
             steps {
-                checkoutWithCredentials(
-                    url: "${GIT_URL}",
-                    branch: "${GIT_BRANCH}",
-                    credentialsId: "${GIT_CREDENTIALS_ID}"
-                )
+                script {
+                    def url = env.GIT_URL
+                    def branch = env.GIT_BRANCH
+                    def credentialsId = env.GIT_CREDENTIALS_ID
+
+                    if (!url) {
+                        error 'Checkout: repository url is required'
+                    }
+                    if (!branch) {
+                        branch = 'main'
+                    }
+
+                    def remote = [url: url]
+                    if (credentialsId) {
+                        remote.credentialsId = credentialsId
+                    }
+
+                    echo "Checking out ${url} (branch: ${branch}) with credential: ${credentialsId ?: '<none>'}"
+
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${branch}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [],
+                        userRemoteConfigs: [remote]
+                    ])
+                }
 
                 sh '''
                     set -eu
@@ -208,11 +220,6 @@ pipeline {
             }
         }
 
-        /*
-         * The current project has existing ESLint errors.
-         * We run lint and report the result without blocking
-         * the Docker deployment pipeline.
-         */
         stage('Frontend Lint Check') {
             steps {
                 dir('frontend') {
@@ -258,6 +265,11 @@ pipeline {
                             echo "SECRETS DETECTION (betterleaks)"
                             echo "======================================"
 
+                            if ! command -v betterleaks &> /dev/null; then
+                                echo "Installing betterleaks..."
+                                npm install -g betterleaks || true
+                            fi
+
                             betterleaks dir backend --report-path betterleaks-backend.json --report-format json
                             rc_backend=\$?
 
@@ -274,7 +286,7 @@ pipeline {
                         returnStatus: true
                     )
 
-                    archiveArtifacts artifacts: 'betterleaks-backend.json,betterleaks-frontend.json', fingerprint: true
+                    archiveArtifacts artifacts: 'betterleaks-backend.json,betterleaks-frontend.json', fingerprint: true, allowEmptyArchive: true
 
                     if (rc != 0) {
                         unstable("betterleaks reported potential secrets (rc ${rc}). Reports archived as build artifacts.")
@@ -296,6 +308,11 @@ pipeline {
                             echo "STATIC ANALYSIS (semgrep)"
                             echo "======================================"
 
+                            if ! command -v semgrep &> /dev/null; then
+                                echo "Installing semgrep..."
+                                pip3 install semgrep || true
+                            fi
+
                             semgrep scan --config auto backend --json --output=semgrep-backend.json
                             rc_backend=\$?
 
@@ -304,7 +321,6 @@ pipeline {
 
                             echo "semgrep exit codes -> backend: \$rc_backend, frontend: \$rc_frontend"
 
-                            # semgrep exit codes: 0 = clean, 1 = findings, >=2 = error
                             if [ "\$rc_backend" -ge 2 ] || [ "\$rc_frontend" -ge 2 ]; then
                                 exit 2
                             fi
@@ -317,7 +333,7 @@ pipeline {
                         returnStatus: true
                     )
 
-                    archiveArtifacts artifacts: 'semgrep-backend.json,semgrep-frontend.json', fingerprint: true
+                    archiveArtifacts artifacts: 'semgrep-backend.json,semgrep-frontend.json', fingerprint: true, allowEmptyArchive: true
 
                     if (rc >= 2) {
                         error "semgrep SAST scan failed (rc ${rc}). See semgrep reports."
@@ -338,6 +354,11 @@ pipeline {
                     echo "======================================"
                     echo "TRIVY FILESYSTEM SCAN"
                     echo "======================================"
+
+                    if ! command -v trivy &> /dev/null; then
+                        echo "Installing trivy..."
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin || true
+                    fi
 
                     trivy fs backend \
                         --scanners vuln,misconfig,secret \
@@ -366,18 +387,44 @@ pipeline {
                         trivy-fs-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
                 '''
-                archiveArtifacts artifacts: 'trivy-fs-*-report.*', fingerprint: true
+                archiveArtifacts artifacts: 'trivy-fs-*-report.*', fingerprint: true, allowEmptyArchive: true
             }
         }
 
-        stage('Build Docker Images (Dockerfile)') {
+        stage('Build Docker Images') {
             steps {
                 echo "======================================"
                 echo "BUILDING DOCKER IMAGES FROM DOCKERFILES"
                 echo "======================================"
 
-                buildDockerImage(image: "${BACKEND_IMAGE}", context: 'backend')
-                buildDockerImage(image: "${FRONTEND_IMAGE}", context: 'frontend')
+                script {
+                    def buildDockerImage = { Map config ->
+                        def context = config.context ?: '.'
+                        def image = config.image
+                        if (!image) {
+                            error 'buildDockerImage: image is required'
+                        }
+                        def dockerfile = config.dockerfile ?: "${context}/Dockerfile"
+                        def pull = (config.pull == null) ? true : config.pull
+
+                        def buildArgs = ''
+                        if (config.buildArgs) {
+                            config.buildArgs.each { arg ->
+                                buildArgs += " --build-arg '${arg}'"
+                            }
+                        }
+
+                        sh """
+                            set -eu
+                            echo "Building image '${image}' from '${dockerfile}' (context: '${context}')"
+                            docker build ${pull ? '--pull' : ''}${buildArgs} -t '${image}' -f '${dockerfile}' '${context}'
+                            docker image inspect '${image}' >/dev/null
+                        """
+                    }
+
+                    buildDockerImage(image: "${BACKEND_IMAGE}", context: 'backend')
+                    buildDockerImage(image: "${FRONTEND_IMAGE}", context: 'frontend')
+                }
 
                 sh '''
                     set -eu
@@ -430,7 +477,7 @@ pipeline {
                         trivy-image-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
                 '''
-                archiveArtifacts artifacts: 'trivy-image-*-report.*', fingerprint: true
+                archiveArtifacts artifacts: 'trivy-image-*-report.*', fingerprint: true, allowEmptyArchive: true
             }
         }
 
@@ -767,7 +814,9 @@ pipeline {
             echo "${BACKEND_IMAGE}"
             echo "${FRONTEND_IMAGE}"
 
-            notifyEmail(status: 'SUCCESS')
+            script {
+                notifyEmail(status: 'SUCCESS')
+            }
         }
 
         unstable {
@@ -777,7 +826,9 @@ pipeline {
 
             echo "The application deployed successfully, but one or more non-blocking quality checks reported issues."
 
-            notifyEmail(status: 'UNSTABLE')
+            script {
+                notifyEmail(status: 'UNSTABLE')
+            }
         }
 
         failure {
@@ -800,7 +851,59 @@ pipeline {
                 fi
             '''
 
-            notifyEmail(status: 'FAILURE')
+            script {
+                notifyEmail(status: 'FAILURE')
+            }
         }
+    }
+}
+
+// Inline shared library functions
+
+def notifyEmail(Map config = [:]) {
+    def status = config.status ?: (currentBuild.currentResult ?: 'UNKNOWN')
+    def recipients = config.to ?: env.CI_EMAIL_RECIPIENTS
+
+    if (!recipients || recipients == 'devops@example.com') {
+        echo 'notifyEmail: no recipients configured (env.CI_EMAIL_RECIPIENTS), skipping email.'
+        return
+    }
+
+    def templateName = (status == 'SUCCESS') ? 'success' : 'failure'
+    def body = """
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #333;">
+            <div style="max-width: 640px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
+                <div style="background: ${status == 'SUCCESS' ? '#1f9d55' : '#cf1124'}; color: white; padding: 16px 24px;">
+                    <h1 style="margin: 0; font-size: 20px;">Build ${status == 'SUCCESS' ? 'Succeeded' : 'Failed'}</h1>
+                </div>
+                <div style="padding: 24px;">
+                    <p>The pipeline for <strong>${env.PROJECT_NAME ?: env.JOB_NAME}</strong> ${status == 'SUCCESS' ? 'completed successfully' : 'did not complete successfully'}.</p>
+                    <table style="border-collapse: collapse; width: 100%;">
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Job</td><td>${env.JOB_NAME}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Build</td><td>#${env.BUILD_NUMBER}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Branch</td><td>${env.GIT_BRANCH ?: ''}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Commit</td><td>${env.GIT_COMMIT ?: ''}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Status</td><td>${status}</td></tr>
+                    </table>
+                    <p><a href="${env.BUILD_URL}console">Open the build console</a></p>
+                </div>
+                <div style="padding: 12px 24px; background: #f5f5f5; color: #777; font-size: 12px;">Sent automatically by Jenkins</div>
+            </div>
+        </body>
+        </html>
+    """
+
+    try {
+        emailext(
+            subject: config.subject ?: "[${status}] ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+            body: body,
+            to: recipients,
+            mimeType: 'text/html',
+            attachLog: (config.attachLog == null) ? true : config.attachLog
+        )
+        echo "Email sent to ${recipients}"
+    } catch (e) {
+        echo "Failed to send email: ${e.getMessage()}"
     }
 }
