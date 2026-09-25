@@ -1,17 +1,38 @@
+// Load shared library from this repo's jenkins-shared-library directory
+@Library(value='react-job-portal-shared-lib', changelog=false) _
+library identifier: 'react-job-portal-shared-lib@main', retriever: legacySCM([$class: 'GitSCMSource', remote: 'https://github.com/Shahriarin2garden/react-job-portal.git', credentialsId: 'github-private-repo-credentials', traits: [[$class: 'jenkins.plugins.git.traits.BranchDiscoveryTrait']]])
+
 pipeline {
     agent any
 
     options {
         timestamps()
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
         skipDefaultCheckout(true)
         timeout(time: 30, unit: 'MINUTES')
+    }
+
+    /*
+     * Webhook triggering.
+     * githubPush() requires the GitHub plugin and a webhook pointing at:
+     *   http://<jenkins-host>:8080/github-webhook/
+     * The pollSCM fallback also picks up changes if the webhook is unavailable.
+     */
+    triggers {
+        githubPush()
+        pollSCM('H/15 * * * *')
     }
 
     environment {
         PROJECT_NAME    = 'react-job-portal'
         COMPOSE_PROJECT = 'react-job-portal'
+
+        GIT_URL            = 'https://github.com/Shahriarin2garden/react-job-portal.git'
+        GIT_BRANCH         = 'main'
+        GIT_CREDENTIALS_ID = 'github-private-repo-credentials'
+
+        CI_EMAIL_RECIPIENTS = 'devops@example.com'
 
         BACKEND_IMAGE   = "react-job-portal-backend:${BUILD_NUMBER}"
         FRONTEND_IMAGE  = "react-job-portal-frontend:${BUILD_NUMBER}"
@@ -42,7 +63,11 @@ pipeline {
 
         stage('Checkout Repository') {
             steps {
-                checkout scm
+                checkoutWithCredentials(
+                    url: "${GIT_URL}",
+                    branch: "${GIT_BRANCH}",
+                    credentialsId: "${GIT_CREDENTIALS_ID}"
+                )
 
                 sh '''
                     set -eu
@@ -222,37 +247,190 @@ pipeline {
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Security Scan - Secrets (betterleaks)') {
+            steps {
+                script {
+                    def rc = sh(
+                        script: """
+                            set +e
+
+                            echo "======================================"
+                            echo "SECRETS DETECTION (betterleaks)"
+                            echo "======================================"
+
+                            betterleaks dir backend --report-path betterleaks-backend.json --report-format json
+                            rc_backend=\$?
+
+                            betterleaks dir frontend --report-path betterleaks-frontend.json --report-format json
+                            rc_frontend=\$?
+
+                            echo "betterleaks exit codes -> backend: \$rc_backend, frontend: \$rc_frontend"
+
+                            if [ "\$rc_backend" -ne 0 ] || [ "\$rc_frontend" -ne 0 ]; then
+                                exit 99
+                            fi
+                            exit 0
+                        """,
+                        returnStatus: true
+                    )
+
+                    archiveArtifacts artifacts: 'betterleaks-backend.json,betterleaks-frontend.json', fingerprint: true
+
+                    if (rc != 0) {
+                        unstable("betterleaks reported potential secrets (rc ${rc}). Reports archived as build artifacts.")
+                    } else {
+                        echo "No secrets detected."
+                    }
+                }
+            }
+        }
+
+        stage('Security Scan - SAST (semgrep)') {
+            steps {
+                script {
+                    def rc = sh(
+                        script: """
+                            set +e
+
+                            echo "======================================"
+                            echo "STATIC ANALYSIS (semgrep)"
+                            echo "======================================"
+
+                            semgrep scan --config auto backend --json --output=semgrep-backend.json
+                            rc_backend=\$?
+
+                            semgrep scan --config auto frontend --json --output=semgrep-frontend.json
+                            rc_frontend=\$?
+
+                            echo "semgrep exit codes -> backend: \$rc_backend, frontend: \$rc_frontend"
+
+                            # semgrep exit codes: 0 = clean, 1 = findings, >=2 = error
+                            if [ "\$rc_backend" -ge 2 ] || [ "\$rc_frontend" -ge 2 ]; then
+                                exit 2
+                            fi
+
+                            if [ "\$rc_backend" -eq 1 ] || [ "\$rc_frontend" -eq 1 ]; then
+                                exit 1
+                            fi
+                            exit 0
+                        """,
+                        returnStatus: true
+                    )
+
+                    archiveArtifacts artifacts: 'semgrep-backend.json,semgrep-frontend.json', fingerprint: true
+
+                    if (rc >= 2) {
+                        error "semgrep SAST scan failed (rc ${rc}). See semgrep reports."
+                    } else if (rc != 0) {
+                        unstable("semgrep SAST reported findings (rc ${rc}). Reports archived as build artifacts.")
+                    } else {
+                        echo "No SAST findings."
+                    }
+                }
+            }
+        }
+
+        stage('Security Scan - Trivy Filesystem') {
             steps {
                 sh '''
                     set -eu
 
                     echo "======================================"
-                    echo "BUILDING DOCKER IMAGES"
+                    echo "TRIVY FILESYSTEM SCAN"
                     echo "======================================"
 
-                    echo "--- Backend image ---"
+                    trivy fs backend \
+                        --scanners vuln,misconfig,secret \
+                        --skip-files '**/betterleaks*.json,**/semgrep*.json' \
+                        --format json -o trivy-fs-backend-report.json
 
-                    docker build \
-                        --pull \
-                        -t "$BACKEND_IMAGE" \
-                        ./backend
+                    echo "HTML report generation is best-effort:"
+                    trivy convert \
+                        --format template --template "@/contrib/html.tpl" \
+                        -o trivy-fs-backend-report.html \
+                        trivy-fs-backend-report.json \
+                        || echo "WARNING: could not generate HTML report; keep JSON report."
+                '''
+                sh '''
+                    set -eu
 
-                    echo "--- Frontend image ---"
+                    trivy fs frontend \
+                        --scanners vuln,misconfig,secret \
+                        --skip-files '**/betterleaks*.json,**/semgrep*.json,**/dist,**/node_modules' \
+                        --format json -o trivy-fs-frontend-report.json
 
-                    docker build \
-                        --pull \
-                        -t "$FRONTEND_IMAGE" \
-                        ./frontend
+                    echo "HTML report generation is best-effort:"
+                    trivy convert \
+                        --format template --template "@/contrib/html.tpl" \
+                        -o trivy-fs-frontend-report.html \
+                        trivy-fs-frontend-report.json \
+                        || echo "WARNING: could not generate HTML report; keep JSON report."
+                '''
+                archiveArtifacts artifacts: 'trivy-fs-*-report.*', fingerprint: true
+            }
+        }
+
+        stage('Build Docker Images (Dockerfile)') {
+            steps {
+                echo "======================================"
+                echo "BUILDING DOCKER IMAGES FROM DOCKERFILES"
+                echo "======================================"
+
+                buildDockerImage(image: "${BACKEND_IMAGE}", context: 'backend')
+                buildDockerImage(image: "${FRONTEND_IMAGE}", context: 'frontend')
+
+                sh '''
+                    set -eu
 
                     echo "======================================"
                     echo "BUILT IMAGES"
                     echo "======================================"
 
                     docker images \
-                        --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}' |
+                        --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' |
                         grep -E 'react-job-portal-(backend|frontend)' || true
                 '''
+            }
+        }
+
+        stage('Security Scan - Trivy Images') {
+            steps {
+                sh '''
+                    set -eu
+
+                    echo "======================================"
+                    echo "TRIVY IMAGE SCAN"
+                    echo "======================================"
+
+                    echo "Scanning image: ${BACKEND_IMAGE}"
+                    trivy image \
+                        --scanners vuln,misconfig,secret \
+                        --format json \
+                        -o trivy-image-backend-report.json \
+                        "${BACKEND_IMAGE}"
+
+                    echo "HTML report generation is best-effort:"
+                    trivy convert \
+                        --format template --template "@/contrib/html.tpl" \
+                        -o trivy-image-backend-report.html \
+                        trivy-image-backend-report.json \
+                        || echo "WARNING: could not generate HTML report; keep JSON report."
+
+                    echo "Scanning image: ${FRONTEND_IMAGE}"
+                    trivy image \
+                        --scanners vuln,misconfig,secret \
+                        --format json \
+                        -o trivy-image-frontend-report.json \
+                        "${FRONTEND_IMAGE}"
+
+                    echo "HTML report generation is best-effort:"
+                    trivy convert \
+                        --format template --template "@/contrib/html.tpl" \
+                        -o trivy-image-frontend-report.html \
+                        trivy-image-frontend-report.json \
+                        || echo "WARNING: could not generate HTML report; keep JSON report."
+                '''
+                archiveArtifacts artifacts: 'trivy-image-*-report.*', fingerprint: true
             }
         }
 
@@ -588,6 +766,8 @@ pipeline {
             echo "Docker images:"
             echo "${BACKEND_IMAGE}"
             echo "${FRONTEND_IMAGE}"
+
+            notifyEmail(status: 'SUCCESS')
         }
 
         unstable {
@@ -596,6 +776,8 @@ pipeline {
             echo "======================================"
 
             echo "The application deployed successfully, but one or more non-blocking quality checks reported issues."
+
+            notifyEmail(status: 'UNSTABLE')
         }
 
         failure {
@@ -617,6 +799,8 @@ pipeline {
                         --remove-orphans
                 fi
             '''
+
+            notifyEmail(status: 'FAILURE')
         }
     }
 }
