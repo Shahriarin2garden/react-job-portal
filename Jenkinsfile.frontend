@@ -1,0 +1,411 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
+        skipDefaultCheckout(true)
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    triggers {
+        githubPush()
+        pollSCM('H/15 * * * *')
+    }
+
+    environment {
+        PROJECT_NAME    = 'react-job-portal-frontend'
+        COMPOSE_PROJECT = 'react-job-portal'
+
+        GIT_URL            = 'https://github.com/Shahriarin2garden/react-job-portal.git'
+        GIT_BRANCH         = 'main'
+        GIT_CREDENTIALS_ID = 'github-private-repo-credentials'
+
+        CI_EMAIL_RECIPIENTS = 'devops@example.com'
+
+        FRONTEND_IMAGE  = "react-job-portal-frontend:${BUILD_NUMBER}"
+        FRONTEND_LATEST = "react-job-portal-frontend:latest"
+
+        FRONTEND_PORT   = '4173'
+
+        VITE_API_URL    = 'http://192.168.56.50:4000/api/v1'
+        FRONTEND_URL    = 'http://192.168.56.50:4173'
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps { deleteDir() }
+        }
+
+        stage('Checkout Repository') {
+            steps {
+                script {
+                    def url = env.GIT_URL
+                    def branch = env.GIT_BRANCH
+                    def credentialsId = env.GIT_CREDENTIALS_ID
+
+                    if (!url) { error 'Checkout: repository url is required' }
+                    if (!branch) { branch = 'main' }
+
+                    def remote = [url: url]
+                    if (credentialsId) { remote.credentialsId = credentialsId }
+
+                    echo "Checking out ${url} (branch: ${branch}) with credential: ${credentialsId ?: '<none>'}"
+
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${branch}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [],
+                        userRemoteConfigs: [remote]
+                    ])
+                }
+
+                sh '''
+                    set -eu
+                    echo "======================================"
+                    echo "CHECKED OUT REPOSITORY"
+                    echo "======================================"
+                    echo "Commit:" && git rev-parse --short HEAD
+                    echo "Remote:" && git remote -v
+                    echo "Frontend:" && ls -lah frontend
+                '''
+            }
+        }
+
+        stage('Preflight Check') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "======================================"
+                    echo "PREFLIGHT CHECK"
+                    echo "======================================"
+                    docker --version
+                    docker compose version
+                    git --version
+                    curl --version | head -n 1
+                    test -f frontend/Dockerfile
+                    test -f frontend/package.json
+                    test -f frontend/package-lock.json
+                    test -f docker-compose.jenkins.yml
+                    echo "All required files exist."
+                '''
+            }
+        }
+
+        stage('Frontend CI') {
+            steps {
+                dir('frontend') {
+                    sh '''
+                        set -eu
+                        echo "======================================"
+                        echo "FRONTEND CI"
+                        echo "======================================"
+
+                        echo "--- Installing dependencies ---"
+                        docker run --rm \
+                            -u "$(id -u):$(id -g)" \
+                            -e HOME=/tmp \
+                            -e NPM_CONFIG_CACHE=/tmp/npm-cache \
+                            -v "$PWD:/app" \
+                            -w /app \
+                            node:22-alpine \
+                            sh -c "npm ci"
+
+                        echo "--- Production build ---"
+                        docker run --rm \
+                            -u "$(id -u):$(id -g)" \
+                            -e HOME=/tmp \
+                            -e NPM_CONFIG_CACHE=/tmp/npm-cache \
+                            -e VITE_API_URL="${VITE_API_URL}" \
+                            -v "$PWD:/app" \
+                            -w /app \
+                            node:22-alpine \
+                            sh -c "npm run build"
+
+                        echo "Frontend build passed."
+                    '''
+                }
+            }
+        }
+
+        stage('Frontend Lint Check') {
+            steps {
+                dir('frontend') {
+                    script {
+                        def lintStatus = sh(
+                            script: '''
+                                set +e
+                                docker run --rm \
+                                    -u "$(id -u):$(id -g)" \
+                                    -e HOME=/tmp \
+                                    -e NPM_CONFIG_CACHE=/tmp/npm-cache \
+                                    -v "$PWD:/app" \
+                                    -w /app \
+                                    node:22-alpine \
+                                    sh -c "npm ci && npm run lint"
+                                exit $?
+                            ''',
+                            returnStatus: true
+                        )
+                        if (lintStatus != 0) {
+                            echo "WARNING: Frontend ESLint reported errors."
+                            currentBuild.result = 'UNSTABLE'
+                        } else {
+                            echo "Frontend lint passed."
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Security Scan - Secrets (Gitleaks)') {
+            steps {
+                script {
+                    def rc = sh(
+                        script: """
+                            set +e
+                            echo "======================================"
+                            echo "SECRETS DETECTION (Gitleaks)"
+                            echo "======================================"
+                            if ! command -v gitleaks &> /dev/null; then
+                                echo "Installing gitleaks..."
+                                curl -sfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | sh -s -- -b /usr/local/bin v8.18.0 || true
+                            fi
+                            gitleaks detect --source frontend --report-format json --report-path gitleaks-frontend-report.json --verbose
+                            rc=\$?
+                            echo "gitleaks exit code: \$rc"
+                            exit 0
+                        """,
+                        returnStatus: true
+                    )
+                    archiveArtifacts artifacts: 'gitleaks-frontend-report.json', fingerprint: true, allowEmptyArchive: true
+                    if (rc != 0) { echo "Gitleaks scan completed (rc ${rc}). Report archived." }
+                    else { echo "No secrets detected." }
+                }
+            }
+        }
+
+        stage('Security Scan - SAST (Semgrep)') {
+            steps {
+                script {
+                    def rc = sh(
+                        script: """
+                            set +e
+                            echo "======================================"
+                            echo "STATIC ANALYSIS (Semgrep)"
+                            echo "======================================"
+                            if ! command -v semgrep &> /dev/null; then
+                                pip3 install semgrep || true
+                            fi
+                            semgrep scan --config auto frontend --json --output=semgrep-frontend-report.json
+                            rc=\$?
+                            if [ "\$rc" -ge 2 ]; then exit 2; fi
+                            exit 0
+                        """,
+                        returnStatus: true
+                    )
+                    archiveArtifacts artifacts: 'semgrep-frontend-report.json', fingerprint: true, allowEmptyArchive: true
+                    if (rc >= 2) { error "Semgrep SAST scan failed (rc ${rc})." }
+                    else if (rc != 0) { echo "Semgrep SAST reported findings (rc ${rc})." }
+                    else { echo "No SAST findings." }
+                }
+            }
+        }
+
+        stage('Security Scan - Trivy Filesystem') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "======================================"
+                    echo "TRIVY FILESYSTEM SCAN (Frontend)"
+                    echo "======================================"
+                    if ! command -v trivy &> /dev/null; then
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.58.1 || \
+                        curl -sfL https://github.com/aquasecurity/trivy/releases/download/v0.58.1/trivy_0.58.1_Linux-64bit.tar.gz | tar -xz -C /usr/local/bin trivy || \
+                        echo "WARNING: Trivy installation failed"
+                    fi
+                    trivy fs frontend \
+                        --scanners vuln,misconfig \
+                        --skip-files '**/gitleaks*.json,**/semgrep*.json,**/dist,**/node_modules' \
+                        --format json -o trivy-fs-frontend-report.json \
+                        --skip-version-check
+                    trivy convert --format html -o trivy-fs-frontend-report.html trivy-fs-frontend-report.json || true
+                '''
+                archiveArtifacts artifacts: 'trivy-fs-frontend-report.*', fingerprint: true, allowEmptyArchive: true
+            }
+        }
+
+        stage('Build Frontend Docker Image') {
+            steps {
+                script {
+                    def buildDockerImage = { Map config ->
+                        def context = config.context ?: '.'
+                        def image = config.image
+                        if (!image) { error 'buildDockerImage: image is required' }
+                        def dockerfile = config.dockerfile ?: "${context}/Dockerfile"
+                        def pull = (config.pull == null) ? true : config.pull
+
+                        def buildArgs = ''
+                        if (config.buildArgs) {
+                            config.buildArgs.each { arg -> buildArgs += " --build-arg '${arg}'" }
+                        }
+
+                        sh """
+                            set -eu
+                            echo "Building image '${image}' from '${dockerfile}' (context: '${context}')"
+                            docker build ${pull ? '--pull' : ''}${buildArgs} -t '${image}' -f '${dockerfile}' '${context}'
+                            docker image inspect '${image}' >/dev/null
+                        """
+                    }
+
+                    buildDockerImage(image: "${FRONTEND_IMAGE}", context: 'frontend', buildArgs: ["VITE_API_URL=${VITE_API_URL}"])
+                    buildDockerImage(image: "${FRONTEND_LATEST}", context: 'frontend', buildArgs: ["VITE_API_URL=${VITE_API_URL}"])
+                }
+
+                sh '''
+                    set -eu
+                    echo "======================================"
+                    echo "BUILT FRONTEND IMAGE"
+                    echo "======================================"
+                    docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' | grep react-job-portal-frontend || true
+                '''
+            }
+        }
+
+        stage('Security Scan - Trivy Image') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "======================================"
+                    echo "TRIVY IMAGE SCAN (Frontend)"
+                    echo "======================================"
+                    trivy image \
+                        --scanners vuln,misconfig \
+                        --format json -o trivy-image-frontend-report.json \
+                        "${FRONTEND_IMAGE}" --skip-version-check
+                    trivy convert --format html -o trivy-image-frontend-report.html trivy-image-frontend-report.json || true
+                '''
+                archiveArtifacts artifacts: 'trivy-image-frontend-report.*', fingerprint: true, allowEmptyArchive: true
+            }
+        }
+
+        stage('Deploy Frontend') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "======================================"
+                    echo "DEPLOYING FRONTEND"
+                    echo "======================================"
+
+                    # Assumes backend and MongoDB are already running
+                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" up -d --no-build frontend
+
+                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
+                '''
+            }
+        }
+
+        stage('Frontend Smoke Test') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "Checking frontend..."
+                    for i in $(seq 1 60); do
+                        if curl -fsS http://127.0.0.1:4173/ >/dev/null 2>&1; then
+                            echo "Frontend is responding after ${i} checks."
+                            exit 0
+                        fi
+                        sleep 2
+                    done
+                    echo "ERROR: Frontend smoke test failed."
+                    curl -v http://127.0.0.1:4173/ || true
+                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" logs --tail=100 frontend
+                    exit 1
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                set +e
+                if [ -f docker-compose.jenkins.yml ]; then
+                    echo "======================================"
+                    echo "FINAL COMPOSE STATUS"
+                    echo "======================================"
+                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" ps
+                    echo "======================================"
+                    echo "FINAL COMPOSE LOGS"
+                    echo "======================================"
+                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" logs --tail=100
+                fi
+            '''
+        }
+
+        success {
+            echo "======================================"
+            echo "FRONTEND PIPELINE COMPLETED"
+            echo "======================================"
+            echo "Frontend: http://localhost:4173"
+            echo "Docker image: ${FRONTEND_IMAGE}"
+            script { sendNotification('SUCCESS') }
+        }
+
+        unstable {
+            echo "======================================"
+            echo "FRONTEND PIPELINE COMPLETED WITH WARNINGS"
+            echo "======================================"
+            script { sendNotification('UNSTABLE') }
+        }
+
+        failure {
+            echo "======================================"
+            echo "FRONTEND PIPELINE FAILED"
+            echo "======================================"
+            sh '''
+                set +e
+                if [ -f docker-compose.jenkins.yml ]; then
+                    docker compose -f docker-compose.jenkins.yml -p "$COMPOSE_PROJECT" down --remove-orphans
+                fi
+            '''
+            script { sendNotification('FAILURE') }
+        }
+    }
+}
+
+def sendNotification(String status) {
+    def recipients = env.CI_EMAIL_RECIPIENTS
+    if (!recipients || recipients == 'devops@example.com') {
+        echo "notifyEmail: no recipients configured, skipping email."
+        return
+    }
+    def body = """
+        <html><body style="font-family: Arial, sans-serif; color: #333;">
+            <div style="max-width: 640px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
+                <div style="background: ${status == 'SUCCESS' ? '#1f9d55' : '#cf1124'}; color: white; padding: 16px 24px;">
+                    <h1 style="margin: 0; font-size: 20px;">Build ${status == 'SUCCESS' ? 'Succeeded' : 'Failed'}</h1>
+                </div>
+                <div style="padding: 24px;">
+                    <p>Pipeline for <strong>${env.PROJECT_NAME ?: env.JOB_NAME}</strong> ${status == 'SUCCESS' ? 'completed successfully' : 'did not complete successfully'}.</p>
+                    <table style="border-collapse: collapse; width: 100%;">
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Job</td><td>${env.JOB_NAME}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Build</td><td>#${env.BUILD_NUMBER}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Branch</td><td>${env.GIT_BRANCH ?: ''}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Commit</td><td>${env.GIT_COMMIT ?: ''}</td></tr>
+                        <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Status</td><td>${status}</td></tr>
+                    </table>
+                    <p><a href="${env.BUILD_URL}console">Open the build console</a></p>
+                </div>
+                <div style="padding: 12px 24px; background: #f5f5f5; color: #777; font-size: 12px;">Sent automatically by Jenkins</div>
+            </div>
+        </body></html>
+    """
+    try {
+        emailext(subject: "[${status}] ${env.JOB_NAME} #${env.BUILD_NUMBER}", body: body, to: recipients, mimeType: 'text/html', attachLog: true)
+        echo "Email sent to ${recipients}"
+    } catch (e) { echo "Failed to send email: ${e.getMessage()}" }
+}

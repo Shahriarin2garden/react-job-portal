@@ -255,7 +255,7 @@ pipeline {
             }
         }
 
-        stage('Security Scan - Secrets (betterleaks)') {
+        stage('Security Scan - Secrets (Gitleaks)') {
             steps {
                 script {
                     def rc = sh(
@@ -263,32 +263,27 @@ pipeline {
                             set +e
 
                             echo "======================================"
-                            echo "SECRETS DETECTION (betterleaks)"
+                            echo "SECRETS DETECTION (Gitleaks)"
                             echo "======================================"
 
-                            if ! command -v betterleaks &> /dev/null; then
-                                echo "Installing betterleaks..."
-                                npm install -g betterleaks || true
+                            if ! command -v gitleaks &> /dev/null; then
+                                echo "Installing gitleaks..."
+                                curl -sfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | sh -s -- -b /usr/local/bin v8.18.0 || true
                             fi
 
-                            betterleaks dir backend --report-path betterleaks-backend.json --report-format json
-                            rc_backend=\$?
+                            gitleaks detect --source . --report-format json --report-path gitleaks-report.json --verbose
+                            rc=\$?
+                            echo "gitleaks exit code: \$rc"
 
-                            betterleaks dir frontend --report-path betterleaks-frontend.json --report-format json
-                            rc_frontend=\$?
-
-                            echo "betterleaks exit codes -> backend: \$rc_backend, frontend: \$rc_frontend"
-
-                            # Don't fail on findings - just report them
                             exit 0
                         """,
                         returnStatus: true
                     )
 
-                    archiveArtifacts artifacts: 'betterleaks-backend.json,betterleaks-frontend.json', fingerprint: true, allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'gitleaks-report.json', fingerprint: true, allowEmptyArchive: true
 
                     if (rc != 0) {
-                        echo "betterleaks scan completed with exit code ${rc}. Reports archived as build artifacts."
+                        echo "Gitleaks scan completed with exit code ${rc}. Report archived."
                     } else {
                         echo "No secrets detected."
                     }
@@ -296,7 +291,7 @@ pipeline {
             }
         }
 
-        stage('Security Scan - SAST (semgrep)') {
+        stage('Security Scan - SAST (Semgrep)') {
             steps {
                 script {
                     def rc = sh(
@@ -304,7 +299,7 @@ pipeline {
                             set +e
 
                             echo "======================================"
-                            echo "STATIC ANALYSIS (semgrep)"
+                            echo "STATIC ANALYSIS (Semgrep)"
                             echo "======================================"
 
                             if ! command -v semgrep &> /dev/null; then
@@ -335,9 +330,9 @@ pipeline {
                     archiveArtifacts artifacts: 'semgrep-backend.json,semgrep-frontend.json', fingerprint: true, allowEmptyArchive: true
 
                     if (rc >= 2) {
-                        error "semgrep SAST scan failed (rc ${rc}). See semgrep reports."
+                        error "Semgrep SAST scan failed (rc ${rc}). See semgrep reports."
                     } else if (rc != 0) {
-                        unstable("semgrep SAST reported findings (rc ${rc}). Reports archived as build artifacts.")
+                        echo "Semgrep SAST reported findings (rc ${rc}). Reports archived."
                     } else {
                         echo "No SAST findings."
                     }
@@ -358,12 +353,12 @@ pipeline {
                         echo "Installing trivy..."
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.58.1 || \
                         curl -sfL https://github.com/aquasecurity/trivy/releases/download/v0.58.1/trivy_0.58.1_Linux-64bit.tar.gz | tar -xz -C /usr/local/bin trivy || \
-                        echo "WARNING: Trivy installation failed, assuming it's available in PATH"
+                        echo "WARNING: Trivy installation failed"
                     fi
 
                     trivy fs backend \
                         --scanners vuln,misconfig \
-                        --skip-files '**/betterleaks*.json,**/semgrep*.json' \
+                        --skip-files '**/gitleaks*.json,**/semgrep*.json' \
                         --format json -o trivy-fs-backend-report.json \
                         --skip-version-check
 
@@ -379,7 +374,7 @@ pipeline {
 
                     trivy fs frontend \
                         --scanners vuln,misconfig \
-                        --skip-files '**/betterleaks*.json,**/semgrep*.json,**/dist,**/node_modules' \
+                        --skip-files '**/gitleaks*.json,**/semgrep*.json,**/dist,**/node_modules' \
                         --format json -o trivy-fs-frontend-report.json \
                         --skip-version-check
 
@@ -443,7 +438,7 @@ pipeline {
             }
         }
 
-stage('Security Scan - Trivy Images') {
+        stage('Security Scan - Trivy Images') {
             steps {
                 sh '''
                     set -eu
@@ -484,7 +479,6 @@ stage('Security Scan - Trivy Images') {
                 '''
                 archiveArtifacts artifacts: 'trivy-image-*-report.*', fingerprint: true, allowEmptyArchive: true
             }
-        }
         }
 
         stage('Clean Previous Deployment') {
@@ -821,7 +815,7 @@ stage('Security Scan - Trivy Images') {
             echo "${FRONTEND_IMAGE}"
 
             script {
-                notifyEmail(status: 'SUCCESS')
+                sendNotification('SUCCESS')
             }
         }
 
@@ -833,7 +827,7 @@ stage('Security Scan - Trivy Images') {
             echo "The application deployed successfully, but one or more non-blocking quality checks reported issues."
 
             script {
-                notifyEmail(status: 'UNSTABLE')
+                sendNotification('UNSTABLE')
             }
         }
 
@@ -858,33 +852,28 @@ stage('Security Scan - Trivy Images') {
             '''
 
             script {
-                notifyEmail(status: 'FAILURE')
+                sendNotification('FAILURE')
             }
         }
     }
 }
 
-// Inline shared library functions
-
-def notifyEmail(Map config = [:]) {
-    def status = config.status ?: (currentBuild.currentResult ?: 'UNKNOWN')
-    def recipients = config.to ?: env.CI_EMAIL_RECIPIENTS
-
+// Notification function defined inside pipeline context
+def sendNotification(String status) {
+    def recipients = env.CI_EMAIL_RECIPIENTS
     if (!recipients || recipients == 'devops@example.com') {
-        echo 'notifyEmail: no recipients configured (env.CI_EMAIL_RECIPIENTS), skipping email.'
+        echo "notifyEmail: no recipients configured, skipping email."
         return
     }
 
-    def templateName = (status == 'SUCCESS') ? 'success' : 'failure'
     def body = """
-        <html>
-        <body style="font-family: Arial, sans-serif; color: #333;">
+        <html><body style="font-family: Arial, sans-serif; color: #333;">
             <div style="max-width: 640px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
                 <div style="background: ${status == 'SUCCESS' ? '#1f9d55' : '#cf1124'}; color: white; padding: 16px 24px;">
                     <h1 style="margin: 0; font-size: 20px;">Build ${status == 'SUCCESS' ? 'Succeeded' : 'Failed'}</h1>
                 </div>
                 <div style="padding: 24px;">
-                    <p>The pipeline for <strong>${env.PROJECT_NAME ?: env.JOB_NAME}</strong> ${status == 'SUCCESS' ? 'completed successfully' : 'did not complete successfully'}.</p>
+                    <p>Pipeline for <strong>${env.PROJECT_NAME ?: env.JOB_NAME}</strong> ${status == 'SUCCESS' ? 'completed successfully' : 'did not complete successfully'}.</p>
                     <table style="border-collapse: collapse; width: 100%;">
                         <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Job</td><td>${env.JOB_NAME}</td></tr>
                         <tr><td style="padding: 6px 0; width: 150px; color: #666; font-weight: bold;">Build</td><td>#${env.BUILD_NUMBER}</td></tr>
@@ -896,17 +885,16 @@ def notifyEmail(Map config = [:]) {
                 </div>
                 <div style="padding: 12px 24px; background: #f5f5f5; color: #777; font-size: 12px;">Sent automatically by Jenkins</div>
             </div>
-        </body>
-        </html>
+        </body></html>
     """
 
     try {
         emailext(
-            subject: config.subject ?: "[${status}] ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+            subject: "[${status}] ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: body,
             to: recipients,
             mimeType: 'text/html',
-            attachLog: (config.attachLog == null) ? true : config.attachLog
+            attachLog: true
         )
         echo "Email sent to ${recipients}"
     } catch (e) {
