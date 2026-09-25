@@ -20,8 +20,8 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm install -g serve
 
 EXPOSE 4173
 
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]
+CMD ["serve", "-s", "dist", "-l", "4173"]
