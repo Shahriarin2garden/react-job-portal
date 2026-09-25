@@ -28,10 +28,10 @@ pipeline {
         FRONTEND_IMAGE  = "react-job-portal-frontend:${BUILD_NUMBER}"
 
         BACKEND_PORT    = '4000'
-        FRONTEND_PORT   = '5173'
+        FRONTEND_PORT   = '4173'
 
         VITE_API_URL    = 'http://192.168.56.50:4000/api/v1'
-        FRONTEND_URL    = 'http://192.168.56.50:5173'
+        FRONTEND_URL    = 'http://192.168.56.50:4173'
         DB_URL          = 'mongodb://mongodb:27017/Job_Portal'
 
         JWT_EXPIRE      = '7d'
@@ -696,7 +696,7 @@ pipeline {
                     for i in $(seq 1 60); do
 
                         if curl -fsS \
-                            http://127.0.0.1:5173/ \
+                            http://127.0.0.1:4173/ \
                             >/dev/null 2>&1
                         then
                             frontend_ok=1
@@ -807,7 +807,7 @@ pipeline {
             echo "JENKINS PIPELINE COMPLETED"
             echo "======================================"
 
-            echo "Frontend: http://localhost:5173"
+            echo "Frontend: http://localhost:4173"
             echo "Backend:  http://localhost:4000"
 
             echo "Docker images:"

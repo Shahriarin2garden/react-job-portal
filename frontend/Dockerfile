@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -8,6 +8,17 @@ RUN npm ci
 
 COPY . .
 
-EXPOSE 5173
+RUN npm run build
 
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+FROM node:22-alpine AS production
+
+WORKDIR /app
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+
+RUN npm ci --omit=dev
+
+EXPOSE 4173
+
+CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]

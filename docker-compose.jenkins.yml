@@ -41,15 +41,14 @@ services:
   frontend:
     image: ${FRONTEND_IMAGE:-react-job-portal-frontend:ci}
     ports:
-      - "5173:5173"
+      - "4173:4173"
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:4000/api/v1}
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5173/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:4173/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 20
