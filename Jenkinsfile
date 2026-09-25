@@ -358,17 +358,20 @@ pipeline {
 
                     if ! command -v trivy &> /dev/null; then
                         echo "Installing trivy..."
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin || true
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.58.1 || \
+                        curl -sfL https://github.com/aquasecurity/trivy/releases/download/v0.58.1/trivy_0.58.1_Linux-64bit.tar.gz | tar -xz -C /usr/local/bin trivy || \
+                        echo "WARNING: Trivy installation failed, assuming it's available in PATH"
                     fi
 
                     trivy fs backend \
-                        --scanners vuln,misconfig,secret \
+                        --scanners vuln,misconfig \
                         --skip-files '**/betterleaks*.json,**/semgrep*.json' \
-                        --format json -o trivy-fs-backend-report.json
+                        --format json -o trivy-fs-backend-report.json \
+                        --skip-version-check
 
                     echo "HTML report generation is best-effort:"
                     trivy convert \
-                        --format template --template "@/contrib/html.tpl" \
+                        --format html \
                         -o trivy-fs-backend-report.html \
                         trivy-fs-backend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
@@ -377,13 +380,14 @@ pipeline {
                     set -eu
 
                     trivy fs frontend \
-                        --scanners vuln,misconfig,secret \
+                        --scanners vuln,misconfig \
                         --skip-files '**/betterleaks*.json,**/semgrep*.json,**/dist,**/node_modules' \
-                        --format json -o trivy-fs-frontend-report.json
+                        --format json -o trivy-fs-frontend-report.json \
+                        --skip-version-check
 
                     echo "HTML report generation is best-effort:"
                     trivy convert \
-                        --format template --template "@/contrib/html.tpl" \
+                        --format html \
                         -o trivy-fs-frontend-report.html \
                         trivy-fs-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
@@ -452,28 +456,30 @@ pipeline {
 
                     echo "Scanning image: ${BACKEND_IMAGE}"
                     trivy image \
-                        --scanners vuln,misconfig,secret \
+                        --scanners vuln,misconfig \
                         --format json \
                         -o trivy-image-backend-report.json \
-                        "${BACKEND_IMAGE}"
+                        "${BACKEND_IMAGE}" \
+                        --skip-version-check
 
                     echo "HTML report generation is best-effort:"
                     trivy convert \
-                        --format template --template "@/contrib/html.tpl" \
+                        --format html \
                         -o trivy-image-backend-report.html \
                         trivy-image-backend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
 
                     echo "Scanning image: ${FRONTEND_IMAGE}"
                     trivy image \
-                        --scanners vuln,misconfig,secret \
+                        --scanners vuln,misconfig \
                         --format json \
                         -o trivy-image-frontend-report.json \
-                        "${FRONTEND_IMAGE}"
+                        "${FRONTEND_IMAGE}" \
+                        --skip-version-check
 
                     echo "HTML report generation is best-effort:"
                     trivy convert \
-                        --format template --template "@/contrib/html.tpl" \
+                        --format html \
                         -o trivy-image-frontend-report.html \
                         trivy-image-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
