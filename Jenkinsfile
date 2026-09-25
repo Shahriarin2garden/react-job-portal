@@ -209,6 +209,7 @@ pipeline {
                             -u "$(id -u):$(id -g)" \
                             -e HOME=/tmp \
                             -e NPM_CONFIG_CACHE=/tmp/npm-cache \
+                            -e VITE_API_URL="${VITE_API_URL}" \
                             -v "$PWD:/app" \
                             -w /app \
                             node:22-alpine \
