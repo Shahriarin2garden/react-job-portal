@@ -1,0 +1,12 @@
+services:
+  platform-mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: platform-mailpit
+    restart: unless-stopped
+    ports:
+      - "8085:8025" # web UI
+      - "8086:1025" # SMTP
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
