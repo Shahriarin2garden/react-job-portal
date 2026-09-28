@@ -441,34 +441,47 @@ pipeline {
                         echo "Created trivy-fs-report.json from frontend only"
                     fi
 
-                    # Generate HTML from unified JSON report using simple template
+                    # Generate HTML from unified JSON report with actual trivy data
                     if [ -f trivy-fs-report.json ]; then
-                        echo "<!DOCTYPE html>
+                        TOTAL_VULN=$(jq '[.Results[]?.Vulnerabilities[]?] | add | length' trivy-fs-report.json 2>/dev/null || echo 0)
+                        TOTAL_MISCONFIG=$(jq '[.Results[]?.Misconfigurations[]?] | add | length' trivy-fs-report.json 2>/dev/null || echo 0)
+
+                        # Extract vulnerabilities
+                        VULN_LIST=$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.InstalledVersion // "N/A") \(.FixedVersion // "N/A")"' trivy-fs-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+
+                        # Extract misconfigurations
+                        MISCONFIG_LIST=$(jq -r '.Results[]?.Misconfigurations[]? | "\(.MisconfigurationID): \(.Title // "Unknown")"' trivy-fs-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+
+                        cat > trivy-fs-report.html <<EOF
+<!DOCTYPE html>
 <html>
 <head>
-    <meta charset='utf-8'>
+    <meta charset="utf-8">
     <title>Trivy Filesystem Scan Report</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
         h1 { color: #333; }
         .summary { background: white; padding: 15px; border-radius: 8; margin-bottom: 20px; }
         .result { background: white; padding: 10px; margin: 10px 0; border-radius: 4; }
-        .vuln { color: #dc3545; font-weight: bold; }
-        .misconfig { color: #6c757d; }
+        .vuln { color: #dc3545; font-weight: bold; border-left: 4px solid #dc3545; }
+        .misconfig { color: #6c757d; border-left: 4px solid #6c757d; }
     </style>
 </head>
 <body>
     <h1>Trivy Filesystem Scan Report</h1>
-    <div class='summary'>
+    <div class="summary">
         <h2>Summary</h2>
-        <p>Total results: <span id='total'>0</span></p>
+        <p>Total vulnerabilities: <span>$TOTAL_VULN</span></p>
+        <p>Total misconfigurations: <span>$TOTAL_MISCONFIG</span></p>
     </div>
-    <div class='results'>
-        <!-- Results will be populated by CI -->
-    </div>
-</body>
-</html>" > trivy-fs-report.html
-                        echo "Generated trivy-fs-report.html from template"
+    <div class="results">
+        <h2>Vulnerabilities</h2>
+EOF
+                        echo "$VULN_LIST" >> trivy-fs-report.html
+                        echo '<hr/><h2>Misconfigurations</h2>' >> trivy-fs-report.html
+                        echo "$MISCONFIG_LIST" >> trivy-fs-report.html
+                        echo '</div></body></html>' >> trivy-fs-report.html
+                        echo "Generated trivy-fs-report.html with $TOTAL_VULN vulnerabilities and $TOTAL_MISCONFIG misconfigurations"
                     else
                         echo "No JSON report to generate HTML from"
                         # Copy backend HTML as fallback
@@ -604,34 +617,47 @@ pipeline {
                         echo "Created trivy-image-report.json from frontend only"
                     fi
 
-                    # Generate HTML from unified JSON report using simple template
+                    # Generate HTML from unified JSON report with actual trivy data
                     if [ -f trivy-image-report.json ]; then
-                        echo "<!DOCTYPE html>
+                        TOTAL_VULN=$(jq '[.Results[]?.Vulnerabilities[]?] | add | length' trivy-image-report.json 2>/dev/null || echo 0)
+                        TOTAL_MISCONFIG=$(jq '[.Results[]?.Misconfigurations[]?] | add | length' trivy-image-report.json 2>/dev/null || echo 0)
+
+                        # Extract vulnerabilities
+                        VULN_LIST=$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.InstalledVersion // "N/A") \(.FixedVersion // "N/A")"' trivy-image-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+
+                        # Extract misconfigurations
+                        MISCONFIG_LIST=$(jq -r '.Results[]?.Misconfigurations[]? | "\(.MisconfigurationID): \(.Title // "Unknown")"' trivy-image-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+
+                        cat > trivy-image-report.html <<EOF
+<!DOCTYPE html>
 <html>
 <head>
-    <meta charset='utf-8'>
+    <meta charset="utf-8">
     <title>Trivy Image Scan Report</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
         h1 { color: #333; }
         .summary { background: white; padding: 15px; border-radius: 8; margin-bottom: 20px; }
         .result { background: white; padding: 10px; margin: 10px 0; border-radius: 4; }
-        .vuln { color: #dc3545; font-weight: bold; }
-        .misconfig { color: #6c757d; }
+        .vuln { color: #dc3545; font-weight: bold; border-left: 4px solid #dc3545; }
+        .misconfig { color: #6c757d; border-left: 4px solid #6c757d; }
     </style>
 </head>
 <body>
     <h1>Trivy Image Scan Report</h1>
-    <div class='summary'>
+    <div class="summary">
         <h2>Summary</h2>
-        <p>Total results: <span id='total'>0</span></p>
+        <p>Total vulnerabilities: <span>$TOTAL_VULN</span></p>
+        <p>Total misconfigurations: <span>$TOTAL_MISCONFIG</span></p>
     </div>
-    <div class='results'>
-        <!-- Results will be populated by CI -->
-    </div>
-</body>
-</html>" > trivy-image-report.html
-                        echo "Generated trivy-image-report.html from template"
+    <div class="results">
+        <h2>Vulnerabilities</h2>
+EOF
+                        echo "$VULN_LIST" >> trivy-image-report.html
+                        echo '<hr/><h2>Misconfigurations</h2>' >> trivy-image-report.html
+                        echo "$MISCONFIG_LIST" >> trivy-image-report.html
+                        echo '</div></body></html>' >> trivy-image-report.html
+                        echo "Generated trivy-image-report.html with $TOTAL_VULN vulnerabilities and $TOTAL_MISCONFIG misconfigurations"
                     else
                         echo "No JSON report to generate HTML from"
                         # Copy backend HTML as fallback
