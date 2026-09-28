@@ -345,6 +345,7 @@ pipeline {
                             fi
 
                             if [ -f semgrep-backend.json ] && [ -f semgrep-frontend.json ]; then
+                                # Semgrep format: {metadata: {...}, results: [...]} - lowercase 'results'
                                 jq -s '.[0].results + .[1].results | {results: .}' semgrep-backend.json semgrep-frontend.json > semgrep.json
                                 echo "Created unified semgrep.json"
                             elif [ -f semgrep-backend.json ]; then
@@ -429,10 +430,20 @@ pipeline {
 
                     # Merge JSON reports - handle trivy's format: {Results: {<file>: {...}}}
                     if [ -f trivy-fs-backend-report.json ] && [ -f trivy-fs-frontend-report.json ]; then
-                        # Combine all Results from both reports
-                        jq -s 'reduce .[] as $item ({}; . + $item.Results) | {Results: .}' \
-                            trivy-fs-backend-report.json trivy-fs-frontend-report.json > trivy-fs-report.json
-                        echo "Created unified trivy-fs-report.json"
+                        # Combine Results dicts from both reports (trivy format: {"/path": {...}})
+                        jq -s 'reduce .[] as $item ({}; . + $item.Results) | .Results' \
+                            trivy-fs-backend-report.json trivy-fs-frontend-report.json > trivy-fs-report.tmp.json
+                        # Wrap back in expected format if needed
+                        if [ -s trivy-fs-report.tmp.json ]; then
+                            echo '{"Results": ' > trivy-fs-report.json
+                            cat trivy-fs-report.tmp.json >> trivy-fs-report.json
+                            echo '}' >> trivy-fs-report.json
+                            echo "Created unified trivy-fs-report.json"
+                        else
+                            cp trivy-fs-backend-report.json trivy-fs-report.json
+                            echo "Created trivy-fs-report.json from backend only"
+                        fi
+                        rm -f trivy-fs-report.tmp.json
                     elif [ -f trivy-fs-backend-report.json ]; then
                         cp trivy-fs-backend-report.json trivy-fs-report.json
                         echo "Created trivy-fs-report.json from backend only"
@@ -624,9 +635,20 @@ EOF
 
                     # Merge JSON reports - handle trivy's format: {Results: {<image>: {...}}}
                     if [ -f trivy-image-backend-report.json ] && [ -f trivy-image-frontend-report.json ]; then
-                        jq -s 'reduce .[] as $item ({}; . + $item.Results) | {Results: .}' \
-                            trivy-image-backend-report.json trivy-image-frontend-report.json > trivy-image-report.json
-                        echo "Created unified trivy-image-report.json"
+                        # Combine Results dicts from both reports (trivy format: {"/image": {...}})
+                        jq -s 'reduce .[] as $item ({}; . + $item.Results) | .Results' \
+                            trivy-image-backend-report.json trivy-image-frontend-report.json > trivy-image-report.tmp.json
+                        # Wrap back in expected format if needed
+                        if [ -s trivy-image-report.tmp.json ]; then
+                            echo '{"Results": ' > trivy-image-report.json
+                            cat trivy-image-report.tmp.json >> trivy-image-report.json
+                            echo '}' >> trivy-image-report.json
+                            echo "Created unified trivy-image-report.json"
+                        else
+                            cp trivy-image-backend-report.json trivy-image-report.json
+                            echo "Created trivy-image-report.json from backend only"
+                        fi
+                        rm -f trivy-image-report.tmp.json
                     elif [ -f trivy-image-backend-report.json ]; then
                         cp trivy-image-backend-report.json trivy-image-report.json
                         echo "Created trivy-image-report.json from backend only"
