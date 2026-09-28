@@ -446,11 +446,29 @@ pipeline {
                         TOTAL_VULN=$(jq '[.Results[]?.Vulnerabilities[]?] | add | length' trivy-fs-report.json 2>/dev/null || echo 0)
                         TOTAL_MISCONFIG=$(jq '[.Results[]?.Misconfigurations[]?] | add | length' trivy-fs-report.json 2>/dev/null || echo 0)
 
-                        # Extract vulnerabilities
-                        VULN_LIST=$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.InstalledVersion // "N/A") \(.FixedVersion // "N/A")"' trivy-fs-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+                        # Extract data using simple jq -r patterns (no escaping issues)
+                        VULN_IDS=$(jq -r '.Results[]?.Vulnerabilities[]? | .VulnerabilityID' trivy-fs-report.json 2>/dev/null | head -20)
+                        VER_INSTALLED=$(jq -r '.Results[]?.Vulnerabilities[]? | .InstalledVersion // "N/A"' trivy-fs-report.json 2>/dev/null | head -20)
+                        VER_FIXED=$(jq -r '.Results[]?.Vulnerabilities[]? | .FixedVersion // "N/A"' trivy-fs-report.json 2>/dev/null | head -20)
 
-                        # Extract misconfigurations
-                        MISCONFIG_LIST=$(jq -r '.Results[]?.Misconfigurations[]? | "\(.MisconfigurationID): \(.Title // "Unknown")"' trivy-fs-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+                        MISCONFIG_IDS=$(jq -r '.Results[]?.Misconfigurations[]? | .MisconfigurationID' trivy-fs-report.json 2>/dev/null | head -20)
+                        MISCONFIG_TITLES=$(jq -r '.Results[]?.Misconfigurations[]? | .Title // "Unknown"' trivy-fs-report.json 2>/dev/null | head -20)
+
+                        # Build HTML table rows in shell
+                        HTML_ROWS=""
+                        for i in $(seq 0 $(( $(echo "$VULN_IDS" | wc -l) - 1 ))); do
+                            ID=$(echo "$VULN_IDS" | sed -n "$((i+1))p")
+                            VER_INS=$(echo "$VER_INSTALLED" | sed -n "$((i+1))p")
+                            VER_FIX=$(echo "$VER_FIXED" | sed -n "$((i+1))p")
+                            HTML_ROWS="${HTML_ROWS}<div class='result vuln'><strong>${ID}</strong> (${VER_INS} -> ${VER_FIX})</div>"
+                        done
+
+                        HTML_MISROWS=""
+                        for i in $(seq 0 $(( $(echo "$MISCONFIG_IDS" | wc -l) - 1 ))); do
+                            MID=$(echo "$MISCONFIG_IDS" | sed -n "$((i+1))p")
+                            MTITLE=$(echo "$MISCONFIG_TITLES" | sed -n "$((i+1))p")
+                            HTML_MISROWS="${HTML_MISROWS}<div class='result misconfig'><strong>${MID}</strong>: ${MTITLE}</div>"
+                        done
 
                         cat > trivy-fs-report.html <<EOF
 <!DOCTYPE html>
@@ -476,11 +494,11 @@ pipeline {
     </div>
     <div class="results">
         <h2>Vulnerabilities</h2>
+${HTML_ROWS}
+        <hr/><h2>Misconfigurations</h2>
+${HTML_MISROWS}
+        </div></body></html>
 EOF
-                        echo "$VULN_LIST" >> trivy-fs-report.html
-                        echo '<hr/><h2>Misconfigurations</h2>' >> trivy-fs-report.html
-                        echo "$MISCONFIG_LIST" >> trivy-fs-report.html
-                        echo '</div></body></html>' >> trivy-fs-report.html
                         echo "Generated trivy-fs-report.html with $TOTAL_VULN vulnerabilities and $TOTAL_MISCONFIG misconfigurations"
                     else
                         echo "No JSON report to generate HTML from"
@@ -622,11 +640,29 @@ EOF
                         TOTAL_VULN=$(jq '[.Results[]?.Vulnerabilities[]?] | add | length' trivy-image-report.json 2>/dev/null || echo 0)
                         TOTAL_MISCONFIG=$(jq '[.Results[]?.Misconfigurations[]?] | add | length' trivy-image-report.json 2>/dev/null || echo 0)
 
-                        # Extract vulnerabilities
-                        VULN_LIST=$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.InstalledVersion // "N/A") \(.FixedVersion // "N/A")"' trivy-image-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+                        # Extract data using simple jq -r patterns (no escaping issues)
+                        VULN_IDS=$(jq -r '.Results[]?.Vulnerabilities[]? | .VulnerabilityID' trivy-image-report.json 2>/dev/null | head -20)
+                        VER_INSTALLED=$(jq -r '.Results[]?.Vulnerabilities[]? | .InstalledVersion // "N/A"' trivy-image-report.json 2>/dev/null | head -20)
+                        VER_FIXED=$(jq -r '.Results[]?.Vulnerabilities[]? | .FixedVersion // "N/A"' trivy-image-report.json 2>/dev/null | head -20)
 
-                        # Extract misconfigurations
-                        MISCONFIG_LIST=$(jq -r '.Results[]?.Misconfigurations[]? | "\(.MisconfigurationID): \(.Title // "Unknown")"' trivy-image-report.json 2>/dev/null | head -20 | tac | nl -w2 -s": ")
+                        MISCONFIG_IDS=$(jq -r '.Results[]?.Misconfigurations[]? | .MisconfigurationID' trivy-image-report.json 2>/dev/null | head -20)
+                        MISCONFIG_TITLES=$(jq -r '.Results[]?.Misconfigurations[]? | .Title // "Unknown"' trivy-image-report.json 2>/dev/null | head -20)
+
+                        # Build HTML table rows in shell
+                        HTML_ROWS=""
+                        for i in $(seq 0 $(( $(echo "$VULN_IDS" | wc -l) - 1 ))); do
+                            ID=$(echo "$VULN_IDS" | sed -n "$((i+1))p")
+                            VER_INS=$(echo "$VER_INSTALLED" | sed -n "$((i+1))p")
+                            VER_FIX=$(echo "$VER_FIXED" | sed -n "$((i+1))p")
+                            HTML_ROWS="${HTML_ROWS}<div class='result vuln'><strong>${ID}</strong> (${VER_INS} -> ${VER_FIX})</div>"
+                        done
+
+                        HTML_MISROWS=""
+                        for i in $(seq 0 $(( $(echo "$MISCONFIG_IDS" | wc -l) - 1 ))); do
+                            MID=$(echo "$MISCONFIG_IDS" | sed -n "$((i+1))p")
+                            MTITLE=$(echo "$MISCONFIG_TITLES" | sed -n "$((i+1))p")
+                            HTML_MISROWS="${HTML_MISROWS}<div class='result misconfig'><strong>${MID}</strong>: ${MTITLE}</div>"
+                        done
 
                         cat > trivy-image-report.html <<EOF
 <!DOCTYPE html>
@@ -652,11 +688,11 @@ EOF
     </div>
     <div class="results">
         <h2>Vulnerabilities</h2>
+${HTML_ROWS}
+        <hr/><h2>Misconfigurations</h2>
+${HTML_MISROWS}
+        </div></body></html>
 EOF
-                        echo "$VULN_LIST" >> trivy-image-report.html
-                        echo '<hr/><h2>Misconfigurations</h2>' >> trivy-image-report.html
-                        echo "$MISCONFIG_LIST" >> trivy-image-report.html
-                        echo '</div></body></html>' >> trivy-image-report.html
                         echo "Generated trivy-image-report.html with $TOTAL_VULN vulnerabilities and $TOTAL_MISCONFIG misconfigurations"
                     else
                         echo "No JSON report to generate HTML from"
