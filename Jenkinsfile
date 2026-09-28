@@ -281,15 +281,20 @@ pipeline {
                             rc=$?
                             echo "gitleaks exit code: $rc"
 
+                            if [ -f gitleaks-report.json ]; then
+                                cp gitleaks-report.json betterleaks.json
+                                echo "Created unified betterleaks.json"
+                            fi
+
                             exit 0
                         ''',
                         returnStatus: true
                     )
 
-                    archiveArtifacts artifacts: 'gitleaks-report.json', fingerprint: true, allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'betterleaks.json,gitleaks-report.json', fingerprint: true, allowEmptyArchive: true
 
                     if (rc != 0) {
-                        echo "Gitleaks scan completed with exit code ${rc}. Report archived."
+                        echo "Gitleaks scan completed with exit code ${rc}. Reports archived."
                     } else {
                         echo "No secrets detected."
                     }
@@ -339,6 +344,17 @@ pipeline {
                                 exit 0
                             fi
 
+                            if [ -f semgrep-backend.json ] && [ -f semgrep-frontend.json ]; then
+                                jq -s '.[0].results + .[1].results | {results: .}' semgrep-backend.json semgrep-frontend.json > semgrep.json
+                                echo "Created unified semgrep.json"
+                            elif [ -f semgrep-backend.json ]; then
+                                cp semgrep-backend.json semgrep.json
+                                echo "Created semgrep.json from backend only"
+                            elif [ -f semgrep-frontend.json ]; then
+                                cp semgrep-frontend.json semgrep.json
+                                echo "Created semgrep.json from frontend only"
+                            fi
+
                             if [ "$rc_backend" -eq 1 ] || [ "$rc_frontend" -eq 1 ]; then
                                 exit 1
                             fi
@@ -347,7 +363,7 @@ pipeline {
                         returnStatus: true
                     )
 
-                    archiveArtifacts artifacts: 'semgrep-backend.json,semgrep-frontend.json', fingerprint: true, allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'semgrep.json,semgrep-backend.json,semgrep-frontend.json', fingerprint: true, allowEmptyArchive: true
 
                     if (rc != 0) {
                         echo "Semgrep SAST reported findings (rc ${rc}). Reports archived."
@@ -411,9 +427,29 @@ pipeline {
                         trivy-fs-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
 
+                    if [ -f trivy-fs-backend-report.json ] && [ -f trivy-fs-frontend-report.json ]; then
+                        jq -s '.[0].Results + .[1].Results | {Results: .}' trivy-fs-backend-report.json trivy-fs-frontend-report.json > trivy-fs-report.json
+                        echo "Created unified trivy-fs-report.json"
+                    elif [ -f trivy-fs-backend-report.json ]; then
+                        cp trivy-fs-backend-report.json trivy-fs-report.json
+                        echo "Created trivy-fs-report.json from backend only"
+                    elif [ -f trivy-fs-frontend-report.json ]; then
+                        cp trivy-fs-frontend-report.json trivy-fs-report.json
+                        echo "Created trivy-fs-report.json from frontend only"
+                    fi
+
+                    if [ -f trivy-fs-backend-report.html ] && [ -f trivy-fs-frontend-report.html ]; then
+                        cat trivy-fs-backend-report.html trivy-fs-frontend-report.html > trivy-fs-report.html
+                        echo "Created unified trivy-fs-report.html"
+                    elif [ -f trivy-fs-backend-report.html ]; then
+                        cp trivy-fs-backend-report.html trivy-fs-report.html
+                    elif [ -f trivy-fs-frontend-report.html ]; then
+                        cp trivy-fs-frontend-report.html trivy-fs-report.html
+                    fi
+
                     exit 0
                 '''
-                archiveArtifacts artifacts: 'trivy-fs-*-report.*', fingerprint: true, allowEmptyArchive: true
+                archiveArtifacts artifacts: 'trivy-fs-report.json,trivy-fs-report.html,trivy-fs-*-report.*', fingerprint: true, allowEmptyArchive: true
             }
         }
 
@@ -523,9 +559,29 @@ pipeline {
                         trivy-image-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
 
+                    if [ -f trivy-image-backend-report.json ] && [ -f trivy-image-frontend-report.json ]; then
+                        jq -s '.[0].Results + .[1].Results | {Results: .}' trivy-image-backend-report.json trivy-image-frontend-report.json > trivy-image-report.json
+                        echo "Created unified trivy-image-report.json"
+                    elif [ -f trivy-image-backend-report.json ]; then
+                        cp trivy-image-backend-report.json trivy-image-report.json
+                        echo "Created trivy-image-report.json from backend only"
+                    elif [ -f trivy-image-frontend-report.json ]; then
+                        cp trivy-image-frontend-report.json trivy-image-report.json
+                        echo "Created trivy-image-report.json from frontend only"
+                    fi
+
+                    if [ -f trivy-image-backend-report.html ] && [ -f trivy-image-frontend-report.html ]; then
+                        cat trivy-image-backend-report.html trivy-image-frontend-report.html > trivy-image-report.html
+                        echo "Created unified trivy-image-report.html"
+                    elif [ -f trivy-image-backend-report.html ]; then
+                        cp trivy-image-backend-report.html trivy-image-report.html
+                    elif [ -f trivy-image-frontend-report.html ]; then
+                        cp trivy-image-frontend-report.html trivy-image-report.html
+                    fi
+
                     exit 0
                 '''
-                archiveArtifacts artifacts: 'trivy-image-*-report.*', fingerprint: true, allowEmptyArchive: true
+                archiveArtifacts artifacts: 'trivy-image-report.json,trivy-image-report.html,trivy-image-*-report.*', fingerprint: true, allowEmptyArchive: true
             }
         }
 
