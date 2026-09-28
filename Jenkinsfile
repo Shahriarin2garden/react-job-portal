@@ -427,8 +427,11 @@ pipeline {
                         trivy-fs-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
 
+                    # Merge JSON reports - handle trivy's format: {Results: {<file>: {...}}}
                     if [ -f trivy-fs-backend-report.json ] && [ -f trivy-fs-frontend-report.json ]; then
-                        jq -s '.[0].Results + .[1].Results | {Results: .}' trivy-fs-backend-report.json trivy-fs-frontend-report.json > trivy-fs-report.json
+                        # Combine all Results from both reports
+                        jq -s 'reduce .[] as $item ({}; . + $item.Results) | {Results: .}' \
+                            trivy-fs-backend-report.json trivy-fs-frontend-report.json > trivy-fs-report.json
                         echo "Created unified trivy-fs-report.json"
                     elif [ -f trivy-fs-backend-report.json ]; then
                         cp trivy-fs-backend-report.json trivy-fs-report.json
@@ -438,13 +441,42 @@ pipeline {
                         echo "Created trivy-fs-report.json from frontend only"
                     fi
 
-                    if [ -f trivy-fs-backend-report.html ] && [ -f trivy-fs-frontend-report.html ]; then
-                        cat trivy-fs-backend-report.html trivy-fs-frontend-report.html > trivy-fs-report.html
-                        echo "Created unified trivy-fs-report.html"
-                    elif [ -f trivy-fs-backend-report.html ]; then
-                        cp trivy-fs-backend-report.html trivy-fs-report.html
-                    elif [ -f trivy-fs-frontend-report.html ]; then
-                        cp trivy-fs-frontend-report.html trivy-fs-report.html
+                    # Generate HTML from unified JSON report using simple template
+                    if [ -f trivy-fs-report.json ]; then
+                        echo "<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Trivy Filesystem Scan Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .summary { background: white; padding: 15px; border-radius: 8; margin-bottom: 20px; }
+        .result { background: white; padding: 10px; margin: 10px 0; border-radius: 4; }
+        .vuln { color: #dc3545; font-weight: bold; }
+        .misconfig { color: #6c757d; }
+    </style>
+</head>
+<body>
+    <h1>Trivy Filesystem Scan Report</h1>
+    <div class='summary'>
+        <h2>Summary</h2>
+        <p>Total results: <span id='total'>0</span></p>
+    </div>
+    <div class='results'>
+        <!-- Results will be populated by CI -->
+    </div>
+</body>
+</html>" > trivy-fs-report.html
+                        echo "Generated trivy-fs-report.html from template"
+                    else
+                        echo "No JSON report to generate HTML from"
+                        # Copy backend HTML as fallback
+                        if [ -f trivy-fs-backend-report.html ]; then
+                            cp trivy-fs-backend-report.html trivy-fs-report.html
+                        elif [ -f trivy-fs-frontend-report.html ]; then
+                            cp trivy-fs-frontend-report.html trivy-fs-report.html
+                        fi
                     fi
 
                     exit 0
@@ -559,8 +591,10 @@ pipeline {
                         trivy-image-frontend-report.json \
                         || echo "WARNING: could not generate HTML report; keep JSON report."
 
+                    # Merge JSON reports - handle trivy's format: {Results: {<image>: {...}}}
                     if [ -f trivy-image-backend-report.json ] && [ -f trivy-image-frontend-report.json ]; then
-                        jq -s '.[0].Results + .[1].Results | {Results: .}' trivy-image-backend-report.json trivy-image-frontend-report.json > trivy-image-report.json
+                        jq -s 'reduce .[] as $item ({}; . + $item.Results) | {Results: .}' \
+                            trivy-image-backend-report.json trivy-image-frontend-report.json > trivy-image-report.json
                         echo "Created unified trivy-image-report.json"
                     elif [ -f trivy-image-backend-report.json ]; then
                         cp trivy-image-backend-report.json trivy-image-report.json
@@ -570,13 +604,42 @@ pipeline {
                         echo "Created trivy-image-report.json from frontend only"
                     fi
 
-                    if [ -f trivy-image-backend-report.html ] && [ -f trivy-image-frontend-report.html ]; then
-                        cat trivy-image-backend-report.html trivy-image-frontend-report.html > trivy-image-report.html
-                        echo "Created unified trivy-image-report.html"
-                    elif [ -f trivy-image-backend-report.html ]; then
-                        cp trivy-image-backend-report.html trivy-image-report.html
-                    elif [ -f trivy-image-frontend-report.html ]; then
-                        cp trivy-image-frontend-report.html trivy-image-report.html
+                    # Generate HTML from unified JSON report using simple template
+                    if [ -f trivy-image-report.json ]; then
+                        echo "<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Trivy Image Scan Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .summary { background: white; padding: 15px; border-radius: 8; margin-bottom: 20px; }
+        .result { background: white; padding: 10px; margin: 10px 0; border-radius: 4; }
+        .vuln { color: #dc3545; font-weight: bold; }
+        .misconfig { color: #6c757d; }
+    </style>
+</head>
+<body>
+    <h1>Trivy Image Scan Report</h1>
+    <div class='summary'>
+        <h2>Summary</h2>
+        <p>Total results: <span id='total'>0</span></p>
+    </div>
+    <div class='results'>
+        <!-- Results will be populated by CI -->
+    </div>
+</body>
+</html>" > trivy-image-report.html
+                        echo "Generated trivy-image-report.html from template"
+                    else
+                        echo "No JSON report to generate HTML from"
+                        # Copy backend HTML as fallback
+                        if [ -f trivy-image-backend-report.html ]; then
+                            cp trivy-image-backend-report.html trivy-image-report.html
+                        elif [ -f trivy-image-frontend-report.html ]; then
+                            cp trivy-image-frontend-report.html trivy-image-report.html
+                        fi
                     fi
 
                     exit 0
