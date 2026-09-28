@@ -16,7 +16,7 @@ pipeline {
 
     environment {
         PROJECT_NAME    = 'react-job-portal-frontend'
-        COMPOSE_PROJECT = 'react-job-portal'
+        COMPOSE_PROJECT = 'react-job-portal-full'
 
         GIT_URL            = 'https://github.com/Shahriarin2garden/react-job-portal.git'
         GIT_BRANCH         = 'main'
